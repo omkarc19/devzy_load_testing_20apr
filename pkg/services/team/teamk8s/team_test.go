@@ -5,17 +5,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	clientrest "k8s.io/client-go/rest"
 
 	iamv0alpha1 "github.com/grafana/grafana/apps/iam/pkg/apis/iam/v0alpha1"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/services/contexthandler/ctxkey"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/search/model"
@@ -171,7 +174,7 @@ func TestTeamK8sService_CreateTeam(t *testing.T) {
 			var svc *TeamK8sService
 
 			if tt.nilProvider {
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
 			} else {
 				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
 				defer ts.Close()
@@ -179,7 +182,7 @@ func TestTeamK8sService_CreateTeam(t *testing.T) {
 				provider := &mockDirectRestConfigProvider{
 					restConfig: &clientrest.Config{Host: ts.URL},
 				}
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
 			}
 
 			var ctx context.Context
@@ -402,7 +405,7 @@ func TestTeamK8sService_GetTeamByID(t *testing.T) {
 			var svc *TeamK8sService
 
 			if tt.nilProvider {
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
 			} else {
 				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if tt.serverResponse != nil {
@@ -414,7 +417,7 @@ func TestTeamK8sService_GetTeamByID(t *testing.T) {
 				provider := &mockDirectRestConfigProvider{
 					restConfig: &clientrest.Config{Host: ts.URL},
 				}
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
 			}
 
 			var ctx context.Context
@@ -596,7 +599,7 @@ func TestTeamK8sService_UpdateTeam(t *testing.T) {
 			var svc *TeamK8sService
 
 			if tt.nilProvider {
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
 			} else {
 				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
 				defer ts.Close()
@@ -604,7 +607,7 @@ func TestTeamK8sService_UpdateTeam(t *testing.T) {
 				provider := &mockDirectRestConfigProvider{
 					restConfig: &clientrest.Config{Host: ts.URL},
 				}
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
 			}
 
 			var ctx context.Context
@@ -936,7 +939,7 @@ func TestTeamK8sService_SearchTeams(t *testing.T) {
 			cfg := setting.NewCfg()
 
 			if tt.nilProvider {
-				svc = NewTeamK8sService(log.NewNopLogger(), cfg, nil)
+				svc = NewTeamK8sService(log.NewNopLogger(), cfg, nil, tracing.InitializeTracerForTest())
 			} else {
 				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if tt.serverResponse != nil {
@@ -948,7 +951,7 @@ func TestTeamK8sService_SearchTeams(t *testing.T) {
 				provider := &mockDirectRestConfigProvider{
 					restConfig: &clientrest.Config{Host: ts.URL},
 				}
-				svc = NewTeamK8sService(log.NewNopLogger(), cfg, provider)
+				svc = NewTeamK8sService(log.NewNopLogger(), cfg, provider, tracing.InitializeTracerForTest())
 			}
 
 			var ctx context.Context
@@ -1130,7 +1133,7 @@ func TestTeamK8sService_DeleteTeam(t *testing.T) {
 			var svc *TeamK8sService
 
 			if tt.nilProvider {
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
 			} else {
 				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
 				defer ts.Close()
@@ -1138,7 +1141,7 @@ func TestTeamK8sService_DeleteTeam(t *testing.T) {
 				provider := &mockDirectRestConfigProvider{
 					restConfig: &clientrest.Config{Host: ts.URL},
 				}
-				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider)
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
 			}
 
 			var ctx context.Context
@@ -1165,6 +1168,836 @@ func TestTeamK8sService_DeleteTeam(t *testing.T) {
 
 			require.NoError(t, err)
 		})
+	}
+}
+
+func mustToUnstructured(t *testing.T, obj any) map[string]any {
+	t.Helper()
+	result, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	require.NoError(t, err)
+	return result
+}
+
+func TestTeamK8sService_GetTeamsByUser(t *testing.T) {
+	tests := []struct {
+		name           string
+		query          *team.GetTeamsByUserQuery
+		requesterOrgID int64
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		nilProvider    bool
+		noReqContext   bool
+		expectErr      bool
+		expectTeams    int
+		expectUID      string
+	}{
+		{
+			name:           "returns teams for user",
+			requesterOrgID: 1,
+			query:          &team.GetTeamsByUserQuery{OrgID: 1, UserID: 42},
+			serverResponse: membershipServerHandler(t),
+			expectTeams:    1,
+			expectUID:      "team-uid-1",
+		},
+		{
+			name:           "returns empty list when user has no bindings",
+			requesterOrgID: 1,
+			query:          &team.GetTeamsByUserQuery{OrgID: 1, UserID: 42},
+			serverResponse: membershipServerHandlerWithEmptyBindings(t),
+			expectTeams:    0,
+		},
+		{
+			name:        "returns error when config provider not initialized",
+			query:       &team.GetTeamsByUserQuery{OrgID: 1, UserID: 42},
+			nilProvider: true,
+			expectErr:   true,
+		},
+		{
+			name:         "returns error when no request context",
+			query:        &team.GetTeamsByUserQuery{OrgID: 1, UserID: 42},
+			noReqContext: true,
+			expectErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var svc *TeamK8sService
+			if tt.nilProvider {
+				svc = NewTeamK8sService(log.NewNopLogger(), setting.NewCfg(), nil, tracing.InitializeTracerForTest())
+			} else {
+				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
+				defer ts.Close()
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: ts.URL}}
+				svc = NewTeamK8sService(log.NewNopLogger(), setting.NewCfg(), provider, tracing.InitializeTracerForTest())
+			}
+
+			var ctx context.Context
+			if tt.noReqContext {
+				ctx = context.Background()
+			} else {
+				ctx = contextWithReqContext()
+			}
+			if tt.requesterOrgID != 0 {
+				ctx = identity.WithRequester(ctx, &identity.StaticRequester{OrgID: tt.requesterOrgID})
+			}
+
+			result, err := svc.GetTeamsByUser(ctx, tt.query)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result, tt.expectTeams)
+			if tt.expectUID != "" {
+				assert.Equal(t, tt.expectUID, result[0].UID)
+			}
+		})
+	}
+}
+
+func TestTeamK8sService_GetTeamIDsByUser(t *testing.T) {
+	tests := []struct {
+		name           string
+		query          *team.GetTeamIDsByUserQuery
+		requesterOrgID int64
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		nilProvider    bool
+		noReqContext   bool
+		expectErr      bool
+		expectIDs      []int64
+	}{
+		{
+			name:           "returns team IDs for user",
+			requesterOrgID: 1,
+			query:          &team.GetTeamIDsByUserQuery{OrgID: 1, UserID: 42},
+			serverResponse: membershipServerHandler(t),
+			expectIDs:      []int64{10},
+		},
+		{
+			name:           "returns all team IDs when user is in multiple teams",
+			requesterOrgID: 1,
+			query:          &team.GetTeamIDsByUserQuery{OrgID: 1, UserID: 42},
+			serverResponse: multiMembershipServerHandler(t),
+			expectIDs:      []int64{10, 20},
+		},
+		{
+			name:           "returns empty list when user has no bindings",
+			requesterOrgID: 1,
+			query:          &team.GetTeamIDsByUserQuery{OrgID: 1, UserID: 42},
+			serverResponse: membershipServerHandlerWithEmptyBindings(t),
+			expectIDs:      []int64{},
+		},
+		{
+			name:        "returns error when config provider not initialized",
+			query:       &team.GetTeamIDsByUserQuery{OrgID: 1, UserID: 42},
+			nilProvider: true,
+			expectErr:   true,
+		},
+		{
+			name:         "returns error when no request context",
+			query:        &team.GetTeamIDsByUserQuery{OrgID: 1, UserID: 42},
+			noReqContext: true,
+			expectErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var svc *TeamK8sService
+			if tt.nilProvider {
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
+			} else {
+				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
+				defer ts.Close()
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: ts.URL}}
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
+			}
+
+			var ctx context.Context
+			if tt.noReqContext {
+				ctx = context.Background()
+			} else {
+				ctx = contextWithReqContext()
+			}
+			if tt.requesterOrgID != 0 {
+				ctx = identity.WithRequester(ctx, &identity.StaticRequester{OrgID: tt.requesterOrgID})
+			}
+
+			result, err := svc.GetTeamIDsByUser(ctx, tt.query)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.expectIDs, result)
+		})
+	}
+}
+
+func TestTeamK8sService_IsTeamMember(t *testing.T) {
+	tests := []struct {
+		name           string
+		orgID          int64
+		teamID         int64
+		userID         int64
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		nilProvider    bool
+		expectErr      bool
+		expectMember   bool
+	}{
+		{
+			name:           "returns true when user is a team member",
+			orgID:          1,
+			teamID:         10,
+			userID:         42,
+			serverResponse: membershipServerHandler(t),
+			expectMember:   true,
+		},
+		{
+			name:           "returns false when user has no bindings for team",
+			orgID:          1,
+			teamID:         10,
+			userID:         42,
+			serverResponse: membershipServerHandlerWithEmptyBindings(t),
+			expectMember:   false,
+		},
+		{
+			name:        "returns error when config provider not initialized",
+			orgID:       1,
+			teamID:      10,
+			userID:      42,
+			nilProvider: true,
+			expectErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var svc *TeamK8sService
+			if tt.nilProvider {
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
+			} else {
+				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
+				defer ts.Close()
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: ts.URL}}
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
+			}
+
+			ctx := contextWithReqContext()
+			ctx = identity.WithRequester(ctx, &identity.StaticRequester{OrgID: tt.orgID})
+
+			result, err := svc.IsTeamMember(ctx, tt.orgID, tt.teamID, tt.userID)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectMember, result)
+		})
+	}
+}
+
+func TestTeamK8sService_RemoveUsersMemberships(t *testing.T) {
+	tests := []struct {
+		name           string
+		userID         int64
+		requesterOrgID int64
+		serverResponse func(deletedBindings *[]string) func(w http.ResponseWriter, r *http.Request)
+		nilProvider    bool
+		noReqContext   bool
+		expectErr      bool
+		expectDeleted  []string
+	}{
+		{
+			name:           "deletes all bindings for user",
+			userID:         42,
+			requesterOrgID: 1,
+			serverResponse: func(deletedBindings *[]string) func(w http.ResponseWriter, r *http.Request) {
+				return func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					path := r.URL.Path
+					switch {
+					case r.Method == http.MethodGet && strings.Contains(path, "/users"):
+						userObj := iamv0alpha1.User{
+							TypeMeta:   metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "User"},
+							ObjectMeta: metav1.ObjectMeta{Name: "user-uid-42", Namespace: "org-1", Labels: map[string]string{"grafana.app/deprecatedInternalID": "42"}},
+						}
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+							"kind":       "UserList",
+							"metadata":   map[string]any{"resourceVersion": "1"},
+							"items":      []any{mustToUnstructured(t, &userObj)},
+						})
+					case r.Method == http.MethodGet && strings.Contains(path, "/teambindings"):
+						bindingObj := iamv0alpha1.TeamBinding{
+							TypeMeta:   metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "TeamBinding"},
+							ObjectMeta: metav1.ObjectMeta{Name: "binding-1", Namespace: "org-1"},
+							Spec: iamv0alpha1.TeamBindingSpec{
+								Subject: iamv0alpha1.TeamBindingspecSubject{Kind: "User", Name: "user-uid-42"},
+								TeamRef: iamv0alpha1.TeamBindingTeamRef{Name: "team-uid-1"},
+							},
+						}
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+							"kind":       "TeamBindingList",
+							"metadata":   map[string]any{"resourceVersion": "1"},
+							"items":      []any{mustToUnstructured(t, &bindingObj)},
+						})
+					case r.Method == http.MethodDelete && strings.Contains(path, "/teambindings/"):
+						parts := strings.Split(path, "/")
+						*deletedBindings = append(*deletedBindings, parts[len(parts)-1])
+						_ = json.NewEncoder(w).Encode(metav1.Status{Status: metav1.StatusSuccess})
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}
+			},
+			expectDeleted: []string{"binding-1"},
+		},
+		{
+			name:        "returns error when config provider not initialized",
+			userID:      42,
+			nilProvider: true,
+			expectErr:   true,
+		},
+		{
+			name:         "returns error when no request context",
+			userID:       42,
+			noReqContext: true,
+			expectErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var svc *TeamK8sService
+			var deletedBindings []string
+
+			if tt.nilProvider {
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, nil, tracing.InitializeTracerForTest())
+			} else if tt.serverResponse != nil {
+				handler := tt.serverResponse(&deletedBindings)
+				ts := httptest.NewServer(http.HandlerFunc(handler))
+				defer ts.Close()
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: ts.URL}}
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
+			} else {
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: "http://localhost:0"}}
+				svc = NewTeamK8sService(log.NewNopLogger(), nil, provider, tracing.InitializeTracerForTest())
+			}
+
+			var ctx context.Context
+			if tt.noReqContext {
+				ctx = context.Background()
+			} else {
+				ctx = contextWithReqContext()
+			}
+			if tt.requesterOrgID != 0 {
+				ctx = identity.WithRequester(ctx, &identity.StaticRequester{OrgID: tt.requesterOrgID})
+			}
+
+			err := svc.RemoveUsersMemberships(ctx, tt.userID)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectDeleted, deletedBindings)
+		})
+	}
+}
+
+func TestTeamK8sService_GetUserTeamMemberships(t *testing.T) {
+	tests := []struct {
+		name           string
+		orgID          int64
+		userID         int64
+		external       bool
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		nilProvider    bool
+		expectErr      bool
+		expectMembers  int
+		validate       func(t *testing.T, result []*team.TeamMemberDTO)
+	}{
+		{
+			name:           "returns memberships with user details",
+			orgID:          1,
+			userID:         42,
+			serverResponse: membershipServerHandler(t),
+			expectMembers:  1,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				assert.Equal(t, "user-uid-42", result[0].UserUID)
+				assert.Equal(t, "team-uid-1", result[0].TeamUID)
+				assert.Equal(t, team.PermissionTypeAdmin, result[0].Permission)
+				assert.Equal(t, "test@example.com", result[0].Email)
+				assert.Equal(t, "Test User", result[0].Name)
+				assert.Equal(t, "testuser", result[0].Login)
+				assert.Equal(t, int64(10), result[0].TeamID)
+			},
+		},
+		{
+			name:           "returns all memberships when user is in multiple teams",
+			orgID:          1,
+			userID:         42,
+			serverResponse: multiMembershipServerHandler(t),
+			expectMembers:  2,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				byTeamUID := map[string]*team.TeamMemberDTO{}
+				for _, m := range result {
+					byTeamUID[m.TeamUID] = m
+				}
+				require.Contains(t, byTeamUID, "team-uid-1")
+				require.Contains(t, byTeamUID, "team-uid-2")
+				assert.Equal(t, int64(10), byTeamUID["team-uid-1"].TeamID)
+				assert.Equal(t, int64(20), byTeamUID["team-uid-2"].TeamID)
+			},
+		},
+		{
+			name:           "returns empty list when user has no bindings",
+			orgID:          1,
+			userID:         42,
+			serverResponse: membershipServerHandlerWithEmptyBindings(t),
+			expectMembers:  0,
+		},
+		{
+			name:           "returns memberships with member permission",
+			orgID:          1,
+			userID:         42,
+			serverResponse: membershipServerHandlerWithPermission(t, iamv0alpha1.TeamBindingTeamPermissionMember),
+			expectMembers:  1,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				assert.Equal(t, team.PermissionTypeMember, result[0].Permission)
+			},
+		},
+		{
+			name:        "returns error when config provider not initialized",
+			orgID:       1,
+			userID:      42,
+			nilProvider: true,
+			expectErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var svc *TeamK8sService
+			if tt.nilProvider {
+				svc = NewTeamK8sService(log.NewNopLogger(), setting.NewCfg(), nil, tracing.InitializeTracerForTest())
+			} else {
+				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
+				defer ts.Close()
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: ts.URL}}
+				svc = NewTeamK8sService(log.NewNopLogger(), setting.NewCfg(), provider, tracing.InitializeTracerForTest())
+			}
+
+			ctx := contextWithReqContext()
+			ctx = identity.WithRequester(ctx, &identity.StaticRequester{OrgID: tt.orgID})
+
+			result, err := svc.GetUserTeamMemberships(ctx, tt.orgID, tt.userID, tt.external, false)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result, tt.expectMembers)
+			if tt.validate != nil {
+				tt.validate(t, result)
+			}
+		})
+	}
+}
+
+func TestTeamK8sService_GetTeamMembers(t *testing.T) {
+	tests := []struct {
+		name           string
+		query          *team.GetTeamMembersQuery
+		requesterOrgID int64
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		nilProvider    bool
+		noReqContext   bool
+		expectErr      bool
+		expectMembers  int
+		validate       func(t *testing.T, result []*team.TeamMemberDTO)
+	}{
+		{
+			name:           "returns members by team ID",
+			requesterOrgID: 1,
+			query:          &team.GetTeamMembersQuery{OrgID: 1, TeamID: 10},
+			serverResponse: membershipServerHandler(t),
+			expectMembers:  1,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				assert.Equal(t, "user-uid-42", result[0].UserUID)
+				assert.Equal(t, int64(42), result[0].UserID)
+				assert.Equal(t, "team-uid-1", result[0].TeamUID)
+				assert.Equal(t, int64(10), result[0].TeamID)
+				assert.Equal(t, team.PermissionTypeAdmin, result[0].Permission)
+				assert.Equal(t, "test@example.com", result[0].Email)
+				assert.Equal(t, "Test User", result[0].Name)
+				assert.Equal(t, "testuser", result[0].Login)
+			},
+		},
+		{
+			name:           "returns members by team UID with resolved team ID",
+			requesterOrgID: 1,
+			query:          &team.GetTeamMembersQuery{OrgID: 1, TeamUID: "team-uid-1"},
+			serverResponse: membershipServerHandler(t),
+			expectMembers:  1,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				assert.Equal(t, int64(10), result[0].TeamID)
+				assert.Equal(t, "team-uid-1", result[0].TeamUID)
+			},
+		},
+		{
+			name:           "returns all members when team has multiple members",
+			requesterOrgID: 1,
+			query:          &team.GetTeamMembersQuery{OrgID: 1, TeamUID: "team-uid-1"},
+			serverResponse: multiMembershipServerHandler(t),
+			expectMembers:  2,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				byUserUID := map[string]*team.TeamMemberDTO{}
+				for _, m := range result {
+					byUserUID[m.UserUID] = m
+				}
+				require.Contains(t, byUserUID, "user-uid-42")
+				require.Contains(t, byUserUID, "user-uid-99")
+				assert.Equal(t, int64(42), byUserUID["user-uid-42"].UserID)
+				assert.Equal(t, "user42@example.com", byUserUID["user-uid-42"].Email)
+				assert.Equal(t, int64(99), byUserUID["user-uid-99"].UserID)
+				assert.Equal(t, "user99@example.com", byUserUID["user-uid-99"].Email)
+			},
+		},
+		{
+			name:           "returns empty list when team has no bindings",
+			requesterOrgID: 1,
+			query:          &team.GetTeamMembersQuery{OrgID: 1, TeamID: 10},
+			serverResponse: membershipServerHandlerWithEmptyBindings(t),
+			expectMembers:  0,
+		},
+		{
+			name:           "returns members with member permission",
+			requesterOrgID: 1,
+			query:          &team.GetTeamMembersQuery{OrgID: 1, TeamID: 10},
+			serverResponse: membershipServerHandlerWithPermission(t, iamv0alpha1.TeamBindingTeamPermissionMember),
+			expectMembers:  1,
+			validate: func(t *testing.T, result []*team.TeamMemberDTO) {
+				assert.Equal(t, team.PermissionTypeMember, result[0].Permission)
+			},
+		},
+		{
+			name:        "returns error when config provider not initialized",
+			query:       &team.GetTeamMembersQuery{OrgID: 1, TeamID: 10},
+			nilProvider: true,
+			expectErr:   true,
+		},
+		{
+			name:         "returns error when no request context",
+			query:        &team.GetTeamMembersQuery{OrgID: 1, TeamID: 10},
+			noReqContext: true,
+			expectErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var svc *TeamK8sService
+			if tt.nilProvider {
+				svc = NewTeamK8sService(log.NewNopLogger(), setting.NewCfg(), nil, tracing.InitializeTracerForTest())
+			} else {
+				ts := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
+				defer ts.Close()
+				provider := &mockDirectRestConfigProvider{restConfig: &clientrest.Config{Host: ts.URL}}
+				svc = NewTeamK8sService(log.NewNopLogger(), setting.NewCfg(), provider, tracing.InitializeTracerForTest())
+			}
+
+			var ctx context.Context
+			if tt.noReqContext {
+				ctx = context.Background()
+			} else {
+				ctx = contextWithReqContext()
+			}
+			if tt.requesterOrgID != 0 {
+				ctx = identity.WithRequester(ctx, &identity.StaticRequester{OrgID: tt.requesterOrgID})
+			}
+
+			result, err := svc.GetTeamMembers(ctx, tt.query)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result, tt.expectMembers)
+			if tt.validate != nil {
+				tt.validate(t, result)
+			}
+		})
+	}
+}
+
+func membershipServerHandler(t *testing.T) func(w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	return membershipServerHandlerWithPermission(t, iamv0alpha1.TeamBindingTeamPermissionAdmin)
+}
+
+func membershipServerHandlerWithPermission(t *testing.T, perm iamv0alpha1.TeamBindingTeamPermission) func(w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+
+	userObj := iamv0alpha1.User{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "User"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "user-uid-42",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "42"},
+		},
+		Spec: iamv0alpha1.UserSpec{Login: "testuser", Email: "test@example.com", Title: "Test User"},
+	}
+
+	teamObj := iamv0alpha1.Team{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "Team"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "team-uid-1",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "10"},
+		},
+		Spec: iamv0alpha1.TeamSpec{Title: "Team One", Email: "team@example.com"},
+	}
+
+	bindingObj := iamv0alpha1.TeamBinding{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "TeamBinding"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "binding-1",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "10"},
+		},
+		Spec: iamv0alpha1.TeamBindingSpec{
+			Subject:    iamv0alpha1.TeamBindingspecSubject{Kind: "User", Name: "user-uid-42"},
+			TeamRef:    iamv0alpha1.TeamBindingTeamRef{Name: "team-uid-1"},
+			Permission: perm,
+			External:   false,
+		},
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(path, "/users") && !strings.Contains(path, "/users/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "UserList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &userObj)},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/users/user-uid-42"):
+			_ = json.NewEncoder(w).Encode(mustToUnstructured(t, &userObj))
+		case r.Method == http.MethodGet && strings.Contains(path, "/teams") && !strings.Contains(path, "/teams/") && (r.URL.Query().Get("labelSelector") != "" || r.URL.Query().Get("fieldSelector") != ""):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "TeamList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &teamObj)},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/teams/team-uid-1"):
+			_ = json.NewEncoder(w).Encode(mustToUnstructured(t, &teamObj))
+		case r.Method == http.MethodGet && strings.Contains(path, "/searchTeams"):
+			memberCount := int64(1)
+			_ = json.NewEncoder(w).Encode(iamv0alpha1.GetSearchTeamsResponse{
+				GetSearchTeamsBody: iamv0alpha1.GetSearchTeamsBody{
+					TotalHits: 1,
+					Hits: []iamv0alpha1.GetSearchTeamsTeamHit{
+						{Name: "team-uid-1", Title: "Team One", Email: "team@example.com", MemberCount: &memberCount},
+					},
+				},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/teambindings") && !strings.Contains(path, "/teambindings/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "TeamBindingList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &bindingObj)},
+			})
+		case r.Method == http.MethodDelete && strings.Contains(path, "/teambindings/"):
+			_ = json.NewEncoder(w).Encode(metav1.Status{Status: metav1.StatusSuccess})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(metav1.Status{Status: metav1.StatusFailure, Code: 404})
+		}
+	}
+}
+
+func membershipServerHandlerWithEmptyBindings(t *testing.T) func(w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+
+	userObj := iamv0alpha1.User{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "User"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "user-uid-42",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "42"},
+		},
+		Spec: iamv0alpha1.UserSpec{Login: "testuser", Email: "test@example.com", Title: "Test User"},
+	}
+
+	teamObj := iamv0alpha1.Team{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "Team"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "team-uid-1",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "10"},
+		},
+		Spec: iamv0alpha1.TeamSpec{Title: "Team One", Email: "team@example.com"},
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(path, "/users") && !strings.Contains(path, "/users/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "UserList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &userObj)},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/teams") && !strings.Contains(path, "/teams/") && r.URL.Query().Get("labelSelector") != "":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "TeamList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &teamObj)},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/teambindings"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "TeamBindingList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/searchTeams"):
+			_ = json.NewEncoder(w).Encode(iamv0alpha1.GetSearchTeamsResponse{
+				GetSearchTeamsBody: iamv0alpha1.GetSearchTeamsBody{TotalHits: 0, Hits: []iamv0alpha1.GetSearchTeamsTeamHit{}},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(metav1.Status{Status: metav1.StatusFailure, Code: 404})
+		}
+	}
+}
+
+func multiMembershipServerHandler(t *testing.T) func(w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+
+	user42 := iamv0alpha1.User{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "User"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "user-uid-42",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "42"},
+		},
+		Spec: iamv0alpha1.UserSpec{Login: "user42", Email: "user42@example.com", Title: "User 42"},
+	}
+	user99 := iamv0alpha1.User{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "User"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "user-uid-99",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "99"},
+		},
+		Spec: iamv0alpha1.UserSpec{Login: "user99", Email: "user99@example.com", Title: "User 99"},
+	}
+	team1 := iamv0alpha1.Team{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "Team"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "team-uid-1",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "10"},
+		},
+		Spec: iamv0alpha1.TeamSpec{Title: "Team One", Email: "team1@example.com"},
+	}
+	team2 := iamv0alpha1.Team{
+		TypeMeta: metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "Team"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "team-uid-2",
+			Namespace: "org-1",
+			Labels:    map[string]string{"grafana.app/deprecatedInternalID": "20"},
+		},
+		Spec: iamv0alpha1.TeamSpec{Title: "Team Two", Email: "team2@example.com"},
+	}
+	binding42To1 := iamv0alpha1.TeamBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "TeamBinding"},
+		ObjectMeta: metav1.ObjectMeta{Name: "binding-42-to-1", Namespace: "org-1"},
+		Spec: iamv0alpha1.TeamBindingSpec{
+			Subject:    iamv0alpha1.TeamBindingspecSubject{Kind: "User", Name: "user-uid-42"},
+			TeamRef:    iamv0alpha1.TeamBindingTeamRef{Name: "team-uid-1"},
+			Permission: iamv0alpha1.TeamBindingTeamPermissionAdmin,
+		},
+	}
+	binding42To2 := iamv0alpha1.TeamBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "TeamBinding"},
+		ObjectMeta: metav1.ObjectMeta{Name: "binding-42-to-2", Namespace: "org-1"},
+		Spec: iamv0alpha1.TeamBindingSpec{
+			Subject:    iamv0alpha1.TeamBindingspecSubject{Kind: "User", Name: "user-uid-42"},
+			TeamRef:    iamv0alpha1.TeamBindingTeamRef{Name: "team-uid-2"},
+			Permission: iamv0alpha1.TeamBindingTeamPermissionMember,
+		},
+	}
+	binding99To1 := iamv0alpha1.TeamBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: iamv0alpha1.GroupVersion.Identifier(), Kind: "TeamBinding"},
+		ObjectMeta: metav1.ObjectMeta{Name: "binding-99-to-1", Namespace: "org-1"},
+		Spec: iamv0alpha1.TeamBindingSpec{
+			Subject:    iamv0alpha1.TeamBindingspecSubject{Kind: "User", Name: "user-uid-99"},
+			TeamRef:    iamv0alpha1.TeamBindingTeamRef{Name: "team-uid-1"},
+			Permission: iamv0alpha1.TeamBindingTeamPermissionMember,
+		},
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		fieldSelector := r.URL.Query().Get("fieldSelector")
+
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(path, "/users") && !strings.Contains(path, "/users/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "UserList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &user42)},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/users/user-uid-42"):
+			_ = json.NewEncoder(w).Encode(mustToUnstructured(t, &user42))
+		case r.Method == http.MethodGet && strings.Contains(path, "/users/user-uid-99"):
+			_ = json.NewEncoder(w).Encode(mustToUnstructured(t, &user99))
+		case r.Method == http.MethodGet && strings.Contains(path, "/teams/team-uid-1"):
+			_ = json.NewEncoder(w).Encode(mustToUnstructured(t, &team1))
+		case r.Method == http.MethodGet && strings.Contains(path, "/teams/team-uid-2"):
+			_ = json.NewEncoder(w).Encode(mustToUnstructured(t, &team2))
+		case r.Method == http.MethodGet && strings.Contains(path, "/teams") && !strings.Contains(path, "/teams/") && r.URL.Query().Get("labelSelector") != "":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "TeamList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      []any{mustToUnstructured(t, &team1)},
+			})
+		case r.Method == http.MethodGet && strings.Contains(path, "/teambindings") && !strings.Contains(path, "/teambindings/"):
+			items := []any{}
+			switch {
+			case strings.Contains(fieldSelector, "spec.subject.name=user-uid-42"):
+				items = []any{mustToUnstructured(t, &binding42To1), mustToUnstructured(t, &binding42To2)}
+			case strings.Contains(fieldSelector, "spec.teamRef.name=team-uid-1"):
+				items = []any{mustToUnstructured(t, &binding42To1), mustToUnstructured(t, &binding99To1)}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"apiVersion": iamv0alpha1.GroupVersion.Identifier(),
+				"kind":       "TeamBindingList",
+				"metadata":   map[string]any{"resourceVersion": "1"},
+				"items":      items,
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(metav1.Status{Status: metav1.StatusFailure, Code: 404})
+		}
 	}
 }
 
