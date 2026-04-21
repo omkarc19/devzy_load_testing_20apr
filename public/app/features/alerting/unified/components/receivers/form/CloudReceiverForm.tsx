@@ -19,11 +19,13 @@ import { CloudCommonChannelSettings } from './CloudCommonChannelSettings';
 import { ReceiverForm } from './ReceiverForm';
 import { type Notifier } from './notifiers';
 
-interface Props {
+export interface CloudReceiverFormProps {
   alertManagerSourceName: string;
   contactPoint?: Receiver;
   readOnly?: boolean;
   editMode?: boolean;
+  /** When set, called instead of navigating to the notifications list after a successful save. */
+  onSaveSuccess?: () => void;
 }
 
 const defaultChannelValues: CloudChannelValues = Object.freeze({
@@ -38,7 +40,13 @@ const defaultChannelValues: CloudChannelValues = Object.freeze({
 const cloudNotifiers = cloudNotifierTypes.map<Notifier>((n) => ({ dto: n }));
 const { useGetAlertmanagerConfigurationQuery } = alertmanagerApi;
 
-export const CloudReceiverForm = ({ contactPoint, alertManagerSourceName, readOnly = false, editMode }: Props) => {
+export const CloudReceiverForm = ({
+  contactPoint,
+  alertManagerSourceName,
+  readOnly = false,
+  editMode,
+  onSaveSuccess,
+}: CloudReceiverFormProps) => {
   const { isLoading, data: config } = useGetAlertmanagerConfigurationQuery(alertManagerSourceName);
 
   const isVanillaAM = isVanillaPrometheusAlertManagerDataSource(alertManagerSourceName);
@@ -62,7 +70,11 @@ export const CloudReceiverForm = ({ contactPoint, alertManagerSourceName, readOn
       } else {
         await createContactPoint.execute({ contactPoint: newReceiver });
       }
-      locationService.push('/alerting/notifications');
+      if (onSaveSuccess) {
+        onSaveSuccess();
+      } else {
+        locationService.push('/alerting/notifications');
+      }
     } catch (error) {
       // React form validation will handle this for us
     }

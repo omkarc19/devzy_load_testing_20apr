@@ -44,13 +44,23 @@ const defaultChannelValues: GrafanaChannelValues = Object.freeze({
   // when the integration is created/type is changed. The backend will use its default if not provided.
 });
 
-interface Props {
+export interface GrafanaReceiverFormProps {
   contactPoint?: GrafanaManagedContactPoint;
   readOnly?: boolean;
   editMode?: boolean;
+  /** When set, called instead of navigating to the notifications list after a successful save. */
+  onSaveSuccess?: () => void;
+  /** Hides the in-form "Manage contact point permissions" control (e.g. instance drawer embed). */
+  hidePermissionsAction?: boolean;
 }
 
-export const GrafanaReceiverForm = ({ contactPoint, readOnly = false, editMode }: Props) => {
+export const GrafanaReceiverForm = ({
+  contactPoint,
+  readOnly = false,
+  editMode,
+  onSaveSuccess,
+  hidePermissionsAction,
+}: GrafanaReceiverFormProps) => {
   const [createContactPoint] = useCreateContactPoint({
     alertmanager: GRAFANA_RULES_SOURCE_NAME,
   });
@@ -105,7 +115,11 @@ export const GrafanaReceiverForm = ({ contactPoint, readOnly = false, editMode }
       } else {
         await createContactPoint.execute({ contactPoint: newReceiver });
       }
-      locationService.push('/alerting/notifications');
+      if (onSaveSuccess) {
+        onSaveSuccess();
+      } else {
+        locationService.push('/alerting/notifications');
+      }
     } catch (error) {
       // React form validation will handle this for us
     }
@@ -188,7 +202,10 @@ export const GrafanaReceiverForm = ({ contactPoint, readOnly = false, editMode }
         commonSettingsComponent={GrafanaCommonChannelSettings}
         customValidators={{ [ReceiverTypes.OnCall]: onCallFormValidators }}
         canManagePermissions={
-          editMode && contactPoint && showManageContactPointPermissions(GRAFANA_RULES_SOURCE_NAME, contactPoint)
+          !hidePermissionsAction &&
+          editMode &&
+          contactPoint &&
+          showManageContactPointPermissions(GRAFANA_RULES_SOURCE_NAME, contactPoint)
         }
         canEditProtectedFields={canEditProtectedFields}
       />
