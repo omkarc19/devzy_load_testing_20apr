@@ -3,13 +3,13 @@ import { Box, CollapsableSection, Alert, Space, Text } from '@grafana/ui';
 import { InfluxVersion } from '../../../types';
 
 import { AdvancedDbConnectionSettings } from './AdvancedDBConnectionSettings';
-import { InfluxFluxDBConnection } from './InfluxFluxDBConnection';
-import { InfluxInfluxQLDBConnection } from './InfluxInfluxQLDBConnection';
-import { InfluxSQLDBConnection } from './InfluxSQLDBConnection';
+import { FluxDbConnection } from './FluxDbConnection';
+import { InfluxQLDbConnection } from './InfluxQLDbConnection';
+import { SQLDbConnection } from './SQLDbConnection';
 import { CONFIG_SECTION_HEADERS, CONTAINER_MIN_WIDTH } from './constants';
 import { type Props } from './types';
 
-export const DatabaseConnectionSection = ({ options, onOptionsChange }: Props) => (
+export const DatabaseConnectionSection = ({ options, onOptionsChange, validation }: Props) => (
   <>
     <Box
       borderStyle="solid"
@@ -50,13 +50,13 @@ export const DatabaseConnectionSection = ({ options, onOptionsChange }: Props) =
         )}
         <>
           {options.jsonData.version === InfluxVersion.InfluxQL && (
-            <InfluxInfluxQLDBConnection options={options} onOptionsChange={onOptionsChange} />
+            <InfluxQLDbConnection options={options} onOptionsChange={onOptionsChange} validation={validation} />
           )}
           {options.jsonData.version === InfluxVersion.Flux && (
-            <InfluxFluxDBConnection options={options} onOptionsChange={onOptionsChange} />
+            <FluxDbConnection options={options} onOptionsChange={onOptionsChange} validation={validation} />
           )}
           {options.jsonData.version === InfluxVersion.SQL && (
-            <InfluxSQLDBConnection options={options} onOptionsChange={onOptionsChange} />
+            <SQLDbConnection options={options} onOptionsChange={onOptionsChange} validation={validation} />
           )}
           {options.jsonData.version && (
             <AdvancedDbConnectionSettings options={options} onOptionsChange={onOptionsChange} />
