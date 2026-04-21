@@ -26,11 +26,13 @@ composableKinds: PanelCfg: {
 			schema: {
 				Options: {
 					permalinkedLogId?:   string
-					showInspectLogLine?: bool | *true
+					enableLogDetails?: bool | *true
 					showCopyLogLink?:    bool | *false
 					showControls?:       bool | *true
 					sortOrder?:          common.LogsSortOrder | (*"Descending" | _)
 					fieldSelectorWidth?: number | *220
+					isLabelFilterActive?: _
+					logDetailsWidth?: number | *400
 					displayedFields?: [...string]
 					buildLinkToLogLine?: _
 					wrapText?:           bool

@@ -16,14 +16,14 @@ export const plugin = new PanelPlugin<Options & TableOptions, TableFieldConfig>(
     const logsTableCategory = [t('logstable.category-table', 'Logs Table')];
     builder
       .addBooleanSwitch({
-        path: 'showInspectLogLine',
-        name: t('logstable.show-inspect-button.name', 'Show inspect button'),
+        path: 'enableLogDetails',
+        name: t('logstable.enable-log-details.name', 'Enable log details'),
         category: logsTableCategory,
         description: t(
-          'logstable.show-inspect-button.description',
-          'Enables/disables the log line inspect button in the first column of each row'
+          'logstable.enable-log-details.description',
+          'When enabled, shows log details for each row. When disabled, shows the log line inspect button instead.'
         ),
-        defaultValue: defaultOptions.showInspectLogLine,
+        defaultValue: defaultOptions.enableLogDetails,
       })
       .addBooleanSwitch({
         path: 'showCopyLogLink',
