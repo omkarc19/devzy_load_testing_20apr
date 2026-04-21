@@ -83,7 +83,7 @@ func ProvideAppInstaller(
 	}, nil
 }
 
-func getStaticRootPath(cfgProvider configprovider.ConfigProvider) (string, error) {
+func getStaticRootPath(cfgProvider configprovider.ConfigProvider, logger logging.Logger) (string, error) {
 	cfg, err := cfgProvider.Get(context.Background())
 	if err != nil {
 		wd, err := os.Getwd()
@@ -99,6 +99,7 @@ func getStaticRootPath(cfgProvider configprovider.ConfigProvider) (string, error
 	}
 
 	staticRootPath := cfg.StaticRootPath
+	logger.Info("StaticRootPath", "path", staticRootPath)
 	// cfg.HomePath may not be set depending on the cfgProvider implementation
 	if staticRootPath == "" || staticRootPath == "." {
 		staticRootPath = "/usr/share/grafana/public"
