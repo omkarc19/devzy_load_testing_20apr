@@ -1,5 +1,6 @@
 import { HttpResponse, http } from 'msw';
 
+import { base64UrlEncode } from '@grafana/alerting';
 import { API_GROUP, API_VERSION, type Receiver } from '@grafana/api-clients/rtkq/notifications.alerting/v0alpha1';
 import {
   getAlertmanagerConfig,
@@ -15,6 +16,38 @@ const usedByPolicies = ['grafana-default-email'];
 const usedByRules = ['grafana-default-email'];
 const cannotBeEdited = ['grafana-default-email'];
 const cannotBeDeleted = ['grafana-default-email'];
+
+/** Parse `metadata.name=<value>` from a Kubernetes-style fieldSelector (single selector; value may be escaped). */
+function parseMetadataNameFromFieldSelector(fieldSelector: string | null): string | undefined {
+  if (!fieldSelector) {
+    return undefined;
+  }
+  for (const part of fieldSelector.split(',')) {
+    const trimmed = part.trim();
+    const m = /^metadata\.name=(.+)$/.exec(trimmed);
+    if (m) {
+      return m[1].replace(/\\,/g, ',').replace(/\\=/g, '=').replace(/\\\\/g, '\\');
+    }
+  }
+  return undefined;
+}
+
+/**
+ * listReceiver fieldSelector may use plain `metadata.name` or base64url-encoded title
+ * (see ContactPointSelector + notifications API); mock data uses plain names from alertmanager config.
+ */
+function receiverMetadataNameMatchesFieldSelector(
+  receiverName: string | undefined,
+  fieldSelectorName: string
+): boolean {
+  if (!receiverName) {
+    return false;
+  }
+  if (receiverName === fieldSelectorName) {
+    return true;
+  }
+  return base64UrlEncode(receiverName) === fieldSelectorName;
+}
 
 const getReceiversList = () => {
   const config = getAlertmanagerConfig(GRAFANA_RULES_SOURCE_NAME);
@@ -32,7 +65,8 @@ const getReceiversList = () => {
         apiVersion: `${API_GROUP}/${API_VERSION}`,
         kind: 'Receiver',
         metadata: {
-          // This isn't exactly accurate, but its the cleanest way to use the same data for AM config and K8S responses
+          // Not exact K8s semantics; shared mock data for AM config and K8s list responses (`name` and `uid`).
+          name: contactPoint.name,
           uid: contactPoint.name,
           annotations: {
             [K8sAnnotations.Provenance]: provenance,
@@ -55,8 +89,17 @@ const getReceiversList = () => {
 };
 
 const listNamespacedReceiverHandler = () =>
-  http.get<{ namespace: string }>(`${ALERTING_API_SERVER_BASE_URL}/namespaces/:namespace/receivers`, () => {
-    return HttpResponse.json(getReceiversList());
+  http.get<{ namespace: string }>(`${ALERTING_API_SERVER_BASE_URL}/namespaces/:namespace/receivers`, ({ request }) => {
+    const list = getReceiversList();
+    const fieldSelector = new URL(request.url).searchParams.get('fieldSelector');
+    const wantedName = parseMetadataNameFromFieldSelector(fieldSelector);
+    if (wantedName !== undefined) {
+      const filtered = list.items.filter((receiver) =>
+        receiverMetadataNameMatchesFieldSelector(receiver.metadata?.name, wantedName)
+      );
+      return HttpResponse.json({ ...list, items: filtered });
+    }
+    return HttpResponse.json(list);
   });
 
 const getNamespacedReceiverHandler = () =>

@@ -8,7 +8,7 @@ import {
 import { type GrafanaTheme2, textUtil } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { config } from '@grafana/runtime';
-import { Icon, LinkButton, Stack, Text, Tooltip, useStyles2 } from '@grafana/ui';
+import { Button, Icon, LinkButton, Stack, Text, Tooltip, useStyles2 } from '@grafana/ui';
 import { receiverTypeNames } from 'app/plugins/datasource/alertmanager/consts';
 import { type GrafanaAlertStateWithReason } from 'app/types/unified-alerting-dto';
 
@@ -195,9 +195,15 @@ interface InstanceTimelineProps {
   records: LogRecord[];
   notifications: NotificationEntry[];
   filter?: TimelineFilter;
+  onOpenContactPoint?: (receiverName: string) => void;
 }
 
-export function InstanceTimeline({ records, notifications, filter = 'all' }: InstanceTimelineProps) {
+export function InstanceTimeline({
+  records,
+  notifications,
+  filter = 'all',
+  onOpenContactPoint,
+}: InstanceTimelineProps) {
   const styles = useStyles2(getStyles);
 
   const groups = useMemo(() => buildTimelineGroups(records, notifications), [records, notifications]);
@@ -241,7 +247,7 @@ export function InstanceTimeline({ records, notifications, filter = 'all' }: Ins
               </div>
               <div className={styles.contentCell}>
                 {entry.type === 'notifications' && entry.notifications && (
-                  <NotificationSummary notifications={entry.notifications} />
+                  <NotificationSummary notifications={entry.notifications} onOpenContactPoint={onOpenContactPoint} />
                 )}
                 {entry.type === 'state-change' && entry.previous && entry.current && (
                   <div className={styles.stateChangeRow}>
@@ -268,7 +274,54 @@ export function InstanceTimeline({ records, notifications, filter = 'all' }: Ins
   );
 }
 
-function NotificationSummary({ notifications }: { notifications: NotificationEntry[] }) {
+/** Opens the contact point in-app or links to notifications filtered by receiver (sibling to expand control — avoids nested interactive elements). */
+function ReceiverLinkOrButton({
+  receiverName,
+  label,
+  onOpenContactPoint,
+}: {
+  receiverName: string;
+  label: string;
+  onOpenContactPoint?: (receiverName: string) => void;
+}) {
+  const styles = useStyles2(getStyles);
+
+  if (onOpenContactPoint) {
+    return (
+      <Button
+        type="button"
+        variant="secondary"
+        fill="text"
+        size="sm"
+        className={styles.receiverAsideButton}
+        onClick={() => onOpenContactPoint(receiverName)}
+      >
+        {label}
+      </Button>
+    );
+  }
+
+  return (
+    <a
+      href={textUtil.sanitizeUrl(
+        createRelativeUrl(`/alerting/notifications?search=${encodeURIComponent(receiverName)}`)
+      )}
+      className={styles.receiverLink}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <Text variant="bodySmall">{label}</Text>
+    </a>
+  );
+}
+
+function NotificationSummary({
+  notifications,
+  onOpenContactPoint,
+}: {
+  notifications: NotificationEntry[];
+  onOpenContactPoint?: (receiverName: string) => void;
+}) {
   const byStatus = useMemo(() => {
     const grouped: Record<CreateNotificationqueryNotificationStatus, NotificationEntry[]> = {
       firing: [],
@@ -285,7 +338,12 @@ function NotificationSummary({ notifications }: { notifications: NotificationEnt
   return (
     <Stack direction="column" gap={0.5}>
       {byStatus.map(([status, items]) => (
-        <NotificationStatusGroup key={status} status={status} notifications={items} />
+        <NotificationStatusGroup
+          key={status}
+          status={status}
+          notifications={items}
+          onOpenContactPoint={onOpenContactPoint}
+        />
       ))}
     </Stack>
   );
@@ -294,9 +352,11 @@ function NotificationSummary({ notifications }: { notifications: NotificationEnt
 function NotificationStatusGroup({
   status,
   notifications,
+  onOpenContactPoint,
 }: {
   status: CreateNotificationqueryNotificationStatus;
   notifications: NotificationEntry[];
+  onOpenContactPoint?: (receiverName: string) => void;
 }) {
   const styles = useStyles2(getStyles);
   const [expanded, setExpanded] = useState(false);
@@ -337,55 +397,54 @@ function NotificationStatusGroup({
 
   return (
     <div>
-      <button
-        className={cx(styles.summaryRowBase, variantStyle)}
-        onClick={() => setExpanded(!expanded)}
-        type="button"
-        aria-expanded={expanded}
-        aria-label={t('alerting.instance-details.timeline-toggle-notifications', 'Toggle notification details')}
-      >
-        <Stack direction="row" alignItems="center" gap={0.5} wrap="wrap">
-          <StateTag state={isFiring ? 'bad' : 'good'} size="sm">
-            {statusLabel}{' '}
-            <span className={styles.lowercaseText}>
-              {t('alerting.instance-details.timeline-notification-label', 'notification')}
-            </span>
-          </StateTag>
-          {deliveryLabel && (
-            <>
-              <Text variant="bodySmall" color="secondary">
-                ·
-              </Text>
-              <Icon name="exclamation-circle" size="sm" className={styles.errorIcon} />
-              <Text variant="bodySmall" color="error" weight="medium">
-                {deliveryLabel}
-              </Text>
-            </>
-          )}
-          <Text variant="bodySmall" color="secondary">
-            →
-          </Text>
-          <Icon name="at" size="sm" />
-          {uniqueReceivers.length === 1 ? (
-            <a
-              href={textUtil.sanitizeUrl(
-                createRelativeUrl(`/alerting/notifications?search=${encodeURIComponent(uniqueReceivers[0])}`)
-              )}
-              className={styles.receiverLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Text variant="bodySmall">{receiverLabel}</Text>
-            </a>
-          ) : (
-            <Text variant="bodySmall" truncate>
-              {receiverLabel}
+      <div className={styles.summaryRowOuter}>
+        <button
+          className={cx(styles.summaryRowBase, variantStyle, styles.summaryExpandToggle)}
+          onClick={() => setExpanded(!expanded)}
+          type="button"
+          aria-expanded={expanded}
+          aria-label={t('alerting.instance-details.timeline-toggle-notifications', 'Toggle notification details')}
+        >
+          <Stack direction="row" alignItems="center" gap={0.5} wrap="wrap" flex={1} minWidth={0}>
+            <StateTag state={isFiring ? 'bad' : 'good'} size="sm">
+              {statusLabel}{' '}
+              <span className={styles.lowercaseText}>
+                {t('alerting.instance-details.timeline-notification-label', 'notification')}
+              </span>
+            </StateTag>
+            {deliveryLabel && (
+              <>
+                <Text variant="bodySmall" color="secondary">
+                  ·
+                </Text>
+                <Icon name="exclamation-circle" size="sm" className={styles.errorIcon} />
+                <Text variant="bodySmall" color="error" weight="medium">
+                  {deliveryLabel}
+                </Text>
+              </>
+            )}
+            <Text variant="bodySmall" color="secondary">
+              →
             </Text>
-          )}
-        </Stack>
-        <Icon name={expanded ? 'angle-up' : 'angle-down'} size="sm" />
-      </button>
+            <Icon name="at" size="sm" />
+            {uniqueReceivers.length !== 1 && (
+              <Text variant="bodySmall" truncate>
+                {receiverLabel}
+              </Text>
+            )}
+          </Stack>
+          <Icon name={expanded ? 'angle-up' : 'angle-down'} size="sm" />
+        </button>
+        {uniqueReceivers.length === 1 && (
+          <div className={styles.receiverAside}>
+            <ReceiverLinkOrButton
+              receiverName={uniqueReceivers[0]}
+              label={receiverLabel}
+              onOpenContactPoint={onOpenContactPoint}
+            />
+          </div>
+        )}
+      </div>
 
       {expanded && (
         <div className={styles.notificationDetails}>
@@ -528,6 +587,30 @@ const getStyles = (theme: GrafanaTheme2) => ({
     width: '2px',
     minHeight: theme.spacing(1.5),
     backgroundColor: theme.colors.border.medium,
+  }),
+
+  summaryRowOuter: css({
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing(1),
+    width: '100%',
+    flexWrap: 'wrap',
+  }),
+
+  summaryExpandToggle: css({
+    flex: 1,
+    minWidth: 0,
+  }),
+
+  receiverAside: css({
+    flexShrink: 0,
+  }),
+
+  receiverAsideButton: css({
+    fontWeight: theme.typography.fontWeightMedium,
+    height: 'auto',
+    minHeight: theme.spacing(3),
   }),
 
   summaryRowBase: css({
