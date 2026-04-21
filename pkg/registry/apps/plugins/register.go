@@ -61,6 +61,7 @@ func ProvideAppInstaller(
 		StaticRootPath: func() (string, error) {
 			return getStaticRootPath(cfgProvider, logger)
 		},
+		CDNAssets: true, // TODO disable
 	})
 	if err != nil {
 		return nil, err
