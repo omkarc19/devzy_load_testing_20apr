@@ -59,7 +59,7 @@ func ProvideAppInstaller(
 	localProvider := meta.NewLocalProvider(pluginStore, moduleHashCalc)
 	coreProvider, err := meta.NewCoreProvider(logger, meta.CoreProviderOpts{
 		StaticRootPath: func() (string, error) {
-			return getStaticRootPath(cfgProvider)
+			return getStaticRootPath(cfgProvider, logger)
 		},
 	})
 	if err != nil {
