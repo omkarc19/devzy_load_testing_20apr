@@ -2178,7 +2178,7 @@ var (
 		{
 			Name:        "teamFolders",
 			Description: "Enables team folders functionality",
-			Stage:       FeatureStageExperimental,
+			Stage:       FeatureStagePublicPreview,
 			Generate:    Generate{LegacyGo: true, LegacyFrontend: true},
 			Owner:       grafanaFrontendNavigation,
 			Expression:  "false",
