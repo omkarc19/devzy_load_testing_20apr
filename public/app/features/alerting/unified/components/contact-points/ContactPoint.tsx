@@ -21,11 +21,25 @@ import { type ReceiverPluginMetadata } from '../receivers/grafanaAppReceivers/us
 import { RECEIVER_META_KEY, RECEIVER_PLUGIN_META_KEY, RECEIVER_STATUS_KEY } from './constants';
 import { type ContactPointWithMetadata, type ReceiverConfigWithMetadata, getReceiverDescription } from './utils';
 
-interface ContactPointProps {
-  contactPoint: ContactPointWithMetadata;
+/**
+ * Identifier for notifications API calls (`useGetContactPoint`, delete, etc.).
+ * Prefer K8s `metadata.name` (the `id` field); fall back to display `name` when `id`
+ * is absent so legacy/config-only shapes still resolve.
+ */
+function getReceiverResourceId(contactPoint: ContactPointWithMetadata): string {
+  return contactPoint.id ?? contactPoint.name;
 }
 
-export const ContactPoint = ({ contactPoint }: ContactPointProps) => {
+interface ContactPointProps {
+  contactPoint: ContactPointWithMetadata;
+  /**
+   * When set, Edit opens this handler instead of navigating to the full-page editor.
+   * Passes the receiver API identifier (K8s resource name when using the notifications API) and optional display title.
+   */
+  onEditContactPoint?: (receiverResourceName: string, displayTitle?: string) => void;
+}
+
+export const ContactPoint = ({ contactPoint, onEditContactPoint }: ContactPointProps) => {
   const { grafana_managed_receiver_configs: receivers } = contactPoint;
   const styles = useStyles2(getStyles);
   const { selectedAlertmanager } = useAlertmanager();
@@ -42,9 +56,14 @@ export const ContactPoint = ({ contactPoint }: ContactPointProps) => {
           contactPoint={contactPoint}
           onDelete={(contactPointToDelete) =>
             showDeleteModal({
-              name: contactPointToDelete.id || contactPointToDelete.name,
+              name: getReceiverResourceId(contactPointToDelete),
               resourceVersion: contactPointToDelete.metadata?.resourceVersion,
             })
+          }
+          onEditClick={
+            onEditContactPoint
+              ? () => onEditContactPoint(getReceiverResourceId(contactPoint), contactPoint.name)
+              : undefined
           }
         />
 

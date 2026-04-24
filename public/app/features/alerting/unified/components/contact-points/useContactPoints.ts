@@ -80,7 +80,8 @@ const useOnCallIntegrations = ({ skip }: Skippable = {}) => {
   }, [installed, loading, oncallIntegrationsResponse]);
 };
 
-const parseK8sReceiver = (item: K8sReceiver): GrafanaManagedContactPoint => {
+/** Maps a notifications API `Receiver` to the unified contact point shape (also used after save mutations). */
+export function parseK8sReceiver(item: K8sReceiver): GrafanaManagedContactPoint {
   const metadataProvenance = item.metadata.annotations?.[K8sAnnotations.Provenance];
   const provenance = metadataProvenance === KnownProvenance.None ? undefined : metadataProvenance;
 
@@ -91,7 +92,7 @@ const parseK8sReceiver = (item: K8sReceiver): GrafanaManagedContactPoint => {
     grafana_managed_receiver_configs: item.spec.integrations,
     metadata: item.metadata,
   };
-};
+}
 
 const useK8sContactPoints = (...[hookParams, queryOptions]: Parameters<typeof useListReceiverQuery>) => {
   return useListReceiverQuery(hookParams, {
@@ -209,37 +210,53 @@ const useGetAlertmanagerContactPoint = (
 };
 
 /**
- * Fetch single contact point via the k8s API, or the alertmanager config
+ * Load one Grafana-managed receiver via `GET .../receivers/{name}`.
+ * `name` is the path segment: use `metadata.name` / `id` from a list or save response, not the display title alone.
  */
 const useGetGrafanaContactPoint = (
   { name }: { name: string },
   queryOptions?: Parameters<typeof useGetReceiverQuery>[1]
 ) => {
-  return useGetReceiverQuery(
-    { name },
-    {
-      ...queryOptions,
-      selectFromResult: (result) => {
-        const data = result.data ? parseK8sReceiver(result.data) : undefined;
-        return {
-          ...result,
-          data,
-          currentData: data,
-        };
-      },
-      skip: queryOptions?.skip,
-    }
-  );
+  const skip = queryOptions?.skip;
+
+  const query = useGetReceiverQuery({ name }, { ...queryOptions, skip: skip || !name });
+
+  return useMemo(() => {
+    const raw = query.data;
+    const data = raw ? parseK8sReceiver(raw) : undefined;
+
+    return {
+      data,
+      currentData: data,
+      isLoading: query.isLoading || query.isFetching,
+      isFetching: query.isFetching,
+      isSuccess: query.isSuccess && Boolean(data),
+      isError: query.isError,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }, [query]);
 };
 
-export const useGetContactPoint = ({ alertmanager, name }: { alertmanager: string; name: string }) => {
+export interface UseGetContactPointArgs {
+  alertmanager: string;
+  /**
+   * For Grafana-managed (K8s) contact points, the path segment is the live `metadata.name` for that object
+   * (see `parseK8sReceiver` / list `id`); it is not the same as the display `spec.title` when the name was
+   * generated for the store.
+   */
+  name: string;
+  skip?: boolean;
+}
+
+export function useGetContactPoint({ alertmanager, name, skip: skipQuery }: UseGetContactPointArgs) {
   const isGrafana = alertmanager === GRAFANA_RULES_SOURCE_NAME;
 
-  const grafanaResponse = useGetGrafanaContactPoint({ name }, { skip: !isGrafana });
-  const alertmanagerResponse = useGetAlertmanagerContactPoint({ alertmanager, name }, { skip: isGrafana });
+  const grafanaResponse = useGetGrafanaContactPoint({ name }, { skip: skipQuery || !isGrafana });
+  const alertmanagerResponse = useGetAlertmanagerContactPoint({ alertmanager, name }, { skip: skipQuery || isGrafana });
 
   return isGrafana ? grafanaResponse : alertmanagerResponse;
-};
+}
 
 export function useContactPointsWithStatus({
   alertmanager,

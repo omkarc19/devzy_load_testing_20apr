@@ -4,13 +4,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useMeasure } from 'react-use';
 
 import { type GrafanaTheme2, type Labels } from '@grafana/data';
-import { t } from '@grafana/i18n';
+import { Trans, t } from '@grafana/i18n';
 import { config, isFetchError } from '@grafana/runtime';
 import { TimeRangePicker, useTimeRange } from '@grafana/scenes-react';
 import {
   Alert,
   Box,
-  Button,
   Drawer,
   Icon,
   LoadingBar,
@@ -21,6 +20,7 @@ import {
   useStyles2,
   useTheme2,
 } from '@grafana/ui';
+import { type GrafanaManagedContactPoint } from 'app/plugins/datasource/alertmanager/types';
 import { type AlertQuery, GrafanaAlertState, type GrafanaRuleDefinition } from 'app/types/unified-alerting-dto';
 
 import { alertRuleApi } from '../../api/alertRuleApi';
@@ -28,14 +28,18 @@ import { stateHistoryApi } from '../../api/stateHistoryApi';
 import { getThresholdsForQueries } from '../../components/rule-editor/util';
 import { EventState } from '../../components/rules/central-state-history/EventListSceneObject';
 import { type LogRecord, historyDataFrameToLogRecords } from '../../components/rules/state-history/common';
+import { useCanViewContactPoints } from '../../hooks/useAbilities';
 import { isAlertQueryOfAlertData } from '../../rule-editor/formProcessing';
+import { AlertmanagerProvider } from '../../state/AlertmanagerContext';
 import { GRAFANA_RULES_SOURCE_NAME } from '../../utils/datasource';
 import { labelsToMatchersParam } from '../../utils/matchers';
 import { stringifyErrorLike } from '../../utils/misc';
 import { groups, rulesNav } from '../../utils/navigation';
-import { useWorkbenchContext } from '../WorkbenchContext';
 
+import { ContactPointDrawer } from './ContactPointDrawer';
 import { DrawerTimeRangeInfoBanner } from './DrawerTimeRangeInfoBanner';
+import { EditContactPointDrawer } from './EditContactPointDrawer';
+import { DrawerBackButton, InstanceDrilldownDrawer } from './InstanceDetailsDrawerShell';
 import { InstanceDetailsDrawerTitle } from './InstanceDetailsDrawerTitle';
 import { InstanceSilenceForm } from './InstanceSilenceForm';
 import { InstanceStateInfoBanner } from './InstanceStateInfoBanner';
@@ -49,22 +53,6 @@ import { formatTimelineDate, noop } from './timelineUtils';
 const { useGetAlertRuleQuery } = alertRuleApi;
 const { useGetRuleHistoryQuery } = stateHistoryApi;
 
-function DrawerBackButton({ onClick }: { onClick: () => void }) {
-  const backLabel = t('alerting.triage.instance-details-drawer.back', 'Back');
-  return (
-    <Stack direction="row" alignItems="center">
-      <Button variant="secondary" size="sm" fill="text" icon="arrow-left" onClick={onClick} aria-label={backLabel}>
-        {backLabel}
-      </Button>
-    </Stack>
-  );
-}
-
-function calculateDrawerWidth(rightColumnWidth: number): number {
-  const calculatedWidth = rightColumnWidth + 32;
-  return Math.max(700, Math.min(calculatedWidth, 1400));
-}
-
 interface InstanceDetailsDrawerProps {
   ruleUID: string;
   instanceLabels: Labels;
@@ -72,10 +60,12 @@ interface InstanceDetailsDrawerProps {
   onClose: () => void;
 }
 
-/** Stacked drilldown views inside the instance drawer. Only `instance-details` and `silence` are wired today; to do: contact point list, notification details, declare incident. */
+/** Stacked drilldown views inside the instance drawer. `declare-incident` and `notification-history-details` are reserved for future work. */
 type DrawerView =
   | { type: 'instance-details' }
-  | { type: 'contact-point-list'; receiverName: string }
+  /** `receiverResourceId` is K8s `metadata.name` when known (stable across rename); optional when opened from timeline with display string only. */
+  | { type: 'contact-point-list'; receiverName: string; receiverResourceId?: string }
+  | { type: 'edit-contact-point'; receiverResourceName: string; displayTitle?: string }
   | { type: 'notification-history-details'; notificationUuid: string; timestampMs?: number }
   | { type: 'silence' }
   | { type: 'declare-incident' };
@@ -84,12 +74,14 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
   const [ref, { width: loadingBarWidth }] = useMeasure<HTMLDivElement>();
   const [timeRange] = useTimeRange();
   const theme = useTheme2();
-  const { rightColumnWidth } = useWorkbenchContext();
+  const canViewContactPoints = useCanViewContactPoints();
   const [viewStack, setViewStack] = useState<DrawerView[]>([{ type: 'instance-details' }]);
   const closeSilenceTimerRef = useRef<number | undefined>(undefined);
+  const closeTopInstanceChildTimerRef = useRef<number | undefined>(undefined);
   const [isClosingSilenceDrawer, setIsClosingSilenceDrawer] = useState(false);
+  /** True while the top contact-point / edit drilldown is sliding off (back to the layer below). */
+  const [isClosingTopInstanceChildDrawer, setIsClosingTopInstanceChildDrawer] = useState(false);
 
-  const drawerWidth = calculateDrawerWidth(rightColumnWidth);
   const silenceDrawerCloseAnimationMs = Number(theme.transitions.duration.standard ?? 180);
   const activeView = viewStack[viewStack.length - 1];
   const canGoBack = viewStack.length > 1;
@@ -153,8 +145,13 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
       window.clearTimeout(closeSilenceTimerRef.current);
       closeSilenceTimerRef.current = undefined;
     }
+    if (closeTopInstanceChildTimerRef.current !== undefined) {
+      window.clearTimeout(closeTopInstanceChildTimerRef.current);
+      closeTopInstanceChildTimerRef.current = undefined;
+    }
     resetSilencePanelStyles();
     setIsClosingSilenceDrawer(false);
+    setIsClosingTopInstanceChildDrawer(false);
     setViewStack([{ type: 'instance-details' }]);
     onClose();
   };
@@ -163,6 +160,9 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
     return () => {
       if (closeSilenceTimerRef.current !== undefined) {
         window.clearTimeout(closeSilenceTimerRef.current);
+      }
+      if (closeTopInstanceChildTimerRef.current !== undefined) {
+        window.clearTimeout(closeTopInstanceChildTimerRef.current);
       }
       resetSilencePanelStyles();
     };
@@ -201,9 +201,43 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
     }, silenceDrawerCloseAnimationMs);
   }, [getTopDrawerContentWrapper, isClosingSilenceDrawer, silenceDrawerCloseAnimationMs, resetSilencePanelStyles]);
 
+  /** Slides the top drilldown off (contact list, or edit on top of list) before popping the stack. */
+  const animateCloseTopInstanceChildDrawer = useCallback(() => {
+    if (isClosingTopInstanceChildDrawer) {
+      return;
+    }
+
+    const el = getTopDrawerContentWrapper();
+    if (el) {
+      el.style.transition = `transform ${silenceDrawerCloseAnimationMs}ms ease-in`;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.style.transform = 'translateX(100%)';
+        });
+      });
+    }
+
+    setIsClosingTopInstanceChildDrawer(true);
+    closeTopInstanceChildTimerRef.current = window.setTimeout(() => {
+      resetSilencePanelStyles();
+      popTopView();
+      setIsClosingTopInstanceChildDrawer(false);
+      closeTopInstanceChildTimerRef.current = undefined;
+    }, silenceDrawerCloseAnimationMs);
+  }, [
+    getTopDrawerContentWrapper,
+    isClosingTopInstanceChildDrawer,
+    resetSilencePanelStyles,
+    silenceDrawerCloseAnimationMs,
+  ]);
+
   const handleBack = () => {
     if (activeView.type === 'silence') {
       animateCloseSilenceDrawer();
+      return;
+    }
+    if (activeView.type === 'edit-contact-point' || activeView.type === 'contact-point-list') {
+      animateCloseTopInstanceChildDrawer();
       return;
     }
 
@@ -212,6 +246,51 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
 
   const handleOpenSilence = useCallback(() => {
     setViewStack((current) => [...current, { type: 'silence' }]);
+  }, []);
+
+  const handleOpenContactPoint = useCallback((receiverName: string) => {
+    setViewStack((current) => [...current, { type: 'contact-point-list', receiverName }]);
+  }, []);
+
+  const handleOpenEditContactPoint = useCallback((receiverResourceName: string, displayTitle?: string) => {
+    setViewStack((current) => {
+      const next = [...current];
+      const listIdx = next.findIndex((v) => v.type === 'contact-point-list');
+      if (listIdx !== -1 && next[listIdx].type === 'contact-point-list') {
+        next[listIdx] = { ...next[listIdx], receiverResourceId: receiverResourceName };
+      }
+      return [...next, { type: 'edit-contact-point', receiverResourceName, displayTitle }];
+    });
+  }, []);
+
+  const handleContactPointEditSaved = useCallback((saved?: GrafanaManagedContactPoint) => {
+    setViewStack((current) => {
+      if (current.length <= 1) {
+        return current;
+      }
+      const next = [...current];
+      // Always sync filter/title from the saved contact point when we have the new display name (rename).
+      // `id` may be unchanged if the mutation response was not parsed — keep existing resource id in that case.
+      if (saved?.name) {
+        const cpListIdx = next.findIndex((v) => v.type === 'contact-point-list');
+        if (cpListIdx !== -1 && next[cpListIdx].type === 'contact-point-list') {
+          next[cpListIdx] = {
+            ...next[cpListIdx],
+            receiverName: saved.name,
+            receiverResourceId: saved.id ?? next[cpListIdx].receiverResourceId,
+          };
+        }
+        const editIdx = next.findIndex((v) => v.type === 'edit-contact-point');
+        if (editIdx !== -1 && next[editIdx].type === 'edit-contact-point') {
+          next[editIdx] = {
+            ...next[editIdx],
+            receiverResourceName: saved.id ?? next[editIdx].receiverResourceName,
+            displayTitle: saved.name,
+          };
+        }
+      }
+      return next.slice(0, -1);
+    });
   }, []);
 
   const sharedTitleProps = useMemo(
@@ -269,6 +348,15 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
             stateHistoryFetching={stateHistoryFetching}
             stateHistoryError={stateHistoryError}
             loadingBarRef={ref}
+            onOpenContactPoint={canViewContactPoints ? handleOpenContactPoint : undefined}
+            contactPointPermissionText={
+              canViewContactPoints
+                ? undefined
+                : t(
+                    'alerting.instance-details.contact-point-no-permission-tooltip',
+                    'You do not have permission to open contact points from here.'
+                  )
+            }
           />
         ) : (
           <Box ref={ref}>
@@ -302,57 +390,109 @@ export function InstanceDetailsDrawer({ ruleUID, instanceLabels, commonLabels, o
 
   if (error || loading || !rule) {
     return (
-      <Drawer title={getDrawerTitle()} onClose={handleDrawerClose} width={drawerWidth}>
+      <Drawer title={getDrawerTitle()} onClose={handleDrawerClose} size="md">
         {getInstanceDetailsBody()}
       </Drawer>
     );
   }
 
-  if (activeView.type === 'silence' || isClosingSilenceDrawer) {
-    return (
-      <>
-        <Drawer
-          title={<InstanceDetailsDrawerTitle {...sharedTitleProps} rule={rule.grafana_alert} />}
-          onClose={handleDrawerClose}
-          width={drawerWidth}
-        >
-          {getInstanceDetailsBody()}
-        </Drawer>
+  /** One stable `InstanceMainDrawer` + conditional drilldowns avoids remounting the instance layer when opening/closing contact or silence (same DOM stacking as before, single React subtree). */
+  const showSilenceLayer = activeView.type === 'silence' || isClosingSilenceDrawer;
+  const showContactLayer =
+    activeView.type === 'contact-point-list' ||
+    activeView.type === 'edit-contact-point' ||
+    isClosingTopInstanceChildDrawer;
+
+  const isEditContact = activeView.type === 'edit-contact-point';
+  let listView: Extract<DrawerView, { type: 'contact-point-list' }> | undefined;
+  if (activeView.type === 'contact-point-list') {
+    listView = activeView;
+  } else if (viewStack.length >= 2) {
+    const below = viewStack[viewStack.length - 2];
+    if (below.type === 'contact-point-list') {
+      listView = below;
+    }
+  }
+
+  const receiverNameForList =
+    listView?.receiverName ?? (isEditContact ? (activeView.displayTitle ?? activeView.receiverResourceName) : '');
+  const receiverResourceIdForList = listView?.receiverResourceId;
+
+  const mainDrawerTitle =
+    !showSilenceLayer && !showContactLayer && canGoBack ? (
+      <Stack direction="column" gap={1}>
+        <DrawerBackButton onClick={handleBack} />
+        {getDrawerTitle()}
+      </Stack>
+    ) : undefined;
+
+  return (
+    <>
+      {/* Same structure as `InstanceMainDrawer` in the shell; inlined so we do not depend on optional `title` in shell types. */}
+      <Drawer
+        title={mainDrawerTitle ?? <InstanceDetailsDrawerTitle {...sharedTitleProps} rule={rule.grafana_alert} />}
+        onClose={handleDrawerClose}
+        size="md"
+      >
+        {getInstanceDetailsBody()}
+      </Drawer>
+
+      {showSilenceLayer && (
         <Drawer
           title={
             <InstanceDetailsDrawerTitle
               {...sharedTitleProps}
               rule={rule.grafana_alert}
-              titleText={t('alerting.triage.instance-details-drawer.silence-title-with-name', 'Silence {{name}}', {
-                name: rule.grafana_alert.title,
-              })}
+              titleText={rule.grafana_alert.title}
+              sectionLabel={<Trans i18nKey="alerting.triage.instance-details-drawer.section-silence">Silence</Trans>}
               hideActions
               showAlertState={false}
               titleSection={<DrawerBackButton onClick={handleBack} />}
             />
           }
           onClose={handleDrawerClose}
-          width={drawerWidth}
+          size="md"
         >
           <InstanceSilenceForm ruleUid={ruleUID} instanceLabels={instanceLabels} onClose={animateCloseSilenceDrawer} />
         </Drawer>
-      </>
-    );
-  }
+      )}
 
-  return (
-    <Drawer
-      title={
-        <Stack direction="column" gap={1}>
-          {canGoBack && <DrawerBackButton onClick={handleBack} />}
-          {getDrawerTitle()}
-        </Stack>
-      }
-      onClose={handleDrawerClose}
-      width={drawerWidth}
-    >
-      {getInstanceDetailsBody()}
-    </Drawer>
+      {showContactLayer && (
+        <AlertmanagerProvider accessType="instance">
+          <InstanceDrilldownDrawer
+            sharedTitleProps={sharedTitleProps}
+            rule={rule.grafana_alert}
+            titleText={t('alerting.triage.instance-details-drawer.contact-point-title', 'Contact point: {{name}}', {
+              name: receiverNameForList,
+            })}
+            onClose={handleDrawerClose}
+            onBack={handleBack}
+          >
+            <ContactPointDrawer
+              listSearchQuery={receiverNameForList}
+              receiverResourceId={receiverResourceIdForList}
+              onEditContactPoint={canViewContactPoints && !isEditContact ? handleOpenEditContactPoint : undefined}
+            />
+          </InstanceDrilldownDrawer>
+          {isEditContact && (
+            <InstanceDrilldownDrawer
+              sharedTitleProps={sharedTitleProps}
+              rule={rule.grafana_alert}
+              titleText={t('alerting.triage.instance-details-drawer.edit-contact-point-title', 'Edit {{name}}', {
+                name: activeView.displayTitle ?? activeView.receiverResourceName,
+              })}
+              onClose={handleDrawerClose}
+              onBack={handleBack}
+            >
+              <EditContactPointDrawer
+                contactPointName={activeView.receiverResourceName}
+                onSaveSuccess={handleContactPointEditSaved}
+              />
+            </InstanceDrilldownDrawer>
+          )}
+        </AlertmanagerProvider>
+      )}
+    </>
   );
 }
 
