@@ -1,0 +1,12 @@
+services:
+  orders-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: "info"
+      API_KEY: "local-dev-key"
+      DEFAULT_CURRENCY: "USD"
+      MAX_ORDER_ITEMS: "50"
+    restart: unless-stopped
