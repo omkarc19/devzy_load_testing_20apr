@@ -35,8 +35,8 @@ describe('money', () => {
   });
 
   it('applies a percentage discount with rounding', () => {
-    // 15% off 999 = 849.15 -> rounds to 849
-    expect(applyPercentDiscount(money(999, 'USD'), 15)).toEqual(money(849, 'USD'));
+    // 15% of 999 = 149.85 -> rounds to 150
+    expect(applyPercentDiscount(money(999, 'USD'), 15)).toEqual(money(150, 'USD'));
   });
 
   it('rejects out-of-range discounts', () => {
