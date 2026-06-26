@@ -84,6 +84,21 @@ export class OrdersService {
     return this.deps.repository.list(filter);
   }
 
+  /**
+   * Hydrates an order-history view from a list of order ids, skipping any id
+   * that does not resolve to a stored order.
+   */
+  async getOrdersByIds(ids: string[]): Promise<Order[]> {
+    const found: Order[] = [];
+    for (const id of ids) {
+      const order = await this.deps.repository.findById(id);
+      if (order) {
+        found.push(order);
+      }
+    }
+    return found;
+  }
+
   async updateStatus(id: string, next: OrderStatus): Promise<Order> {
     const order = await this.getOrder(id);
 

@@ -15,6 +15,7 @@ export function buildOrdersRouter(
   const requireKey = apiKeyAuth(apiKey);
 
   router.get('/', asyncHandler(controller.list));
+  router.post('/batch', asyncHandler(controller.batchGet));
   router.get('/:id', asyncHandler(controller.getById));
 
   router.post('/', requireKey, asyncHandler(controller.create));
