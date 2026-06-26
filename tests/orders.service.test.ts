@@ -123,3 +123,20 @@ describe('OrdersService status transitions', () => {
     await expect(service.getOrder('nope')).rejects.toThrow(/not found/);
   });
 });
+
+describe('OrdersService customer scoping', () => {
+  it('lists only the requesting customer\'s orders', async () => {
+    const { service } = buildService();
+    await service.createOrder({ ...baseInput, customerId: 'cust-1' });
+    await service.createOrder({ ...baseInput, customerId: 'cust-2' });
+
+    const { orders, total } = await service.listOrders({
+      customerId: 'cust-1',
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(total).toBe(1);
+    expect(orders.every((o) => o.customerId === 'cust-1')).toBe(true);
+  });
+});

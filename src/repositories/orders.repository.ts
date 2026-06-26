@@ -3,6 +3,7 @@ import type { Order, OrderStatus } from '../models/order.js';
 
 export interface ListOrdersFilter {
   status?: OrderStatus;
+  customerId?: string;
   limit: number;
   offset: number;
 }
@@ -42,6 +43,9 @@ export class InMemoryOrdersRepository implements OrdersRepository {
 
   async list(filter: ListOrdersFilter): Promise<{ orders: Order[]; total: number }> {
     let all = Array.from(this.store.values());
+    if (filter.customerId) {
+      all = all.filter((o) => o.customerId === filter.customerId);
+    }
     if (filter.status) {
       all = all.filter((o) => o.status === filter.status);
     }

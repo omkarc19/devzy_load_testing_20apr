@@ -58,6 +58,7 @@ export class OrdersController {
     const offset = query.offset ?? 0;
     const filter = {
       ...(query.status ? { status: query.status } : {}),
+      customerId: req.customerId as string,
       limit,
       offset,
     };
