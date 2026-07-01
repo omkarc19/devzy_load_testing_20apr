@@ -49,6 +49,8 @@ export interface Order {
   /** Whole-number percentage discount applied to the subtotal. */
   readonly discountPercent: number;
   readonly currency: string;
+  /** Free-form fulfillment metadata (carrier, tracking, partner fields). */
+  readonly metadata?: Record<string, unknown>;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
