@@ -33,6 +33,7 @@ export const listOrdersQuerySchema = z.object({
   status: z
     .enum(['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'])
     .optional(),
+  customerId: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(100).default(20),
   offset: z.coerce.number().int().nonnegative().default(0),
 });

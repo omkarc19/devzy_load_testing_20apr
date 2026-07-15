@@ -3,6 +3,7 @@ import type { Order, OrderStatus } from '../models/order.js';
 
 export interface ListOrdersFilter {
   status?: OrderStatus;
+  customerId?: string;
   limit: number;
   offset: number;
 }
@@ -44,6 +45,9 @@ export class InMemoryOrdersRepository implements OrdersRepository {
     let all = Array.from(this.store.values());
     if (filter.status) {
       all = all.filter((o) => o.status === filter.status);
+    }
+    if (filter.customerId) {
+      all = all.filter((o) => o.customerId === filter.customerId);
     }
     // Newest first for a predictable, paginated listing.
     all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import type { OrdersService } from '../services/orders.service.js';
+import { getCustomerId } from '../middleware/customer-context.js';
 import {
   createOrderSchema,
   listOrdersQuerySchema,
@@ -56,8 +57,11 @@ export class OrdersController {
     const query = parseOrThrow(listOrdersQuerySchema, req.query);
     const limit = query.limit ?? 20;
     const offset = query.offset ?? 0;
+    const headerCustomerId = getCustomerId(req);
     const filter = {
       ...(query.status ? { status: query.status } : {}),
+      ...(headerCustomerId ? { customerId: headerCustomerId } : {}),
+      ...(query.customerId ? { customerId: query.customerId } : {}),
       limit,
       offset,
     };

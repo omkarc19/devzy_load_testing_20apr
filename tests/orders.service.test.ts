@@ -3,16 +3,20 @@ import { OrdersService } from '../src/services/orders.service.js';
 import { InMemoryOrdersRepository } from '../src/repositories/orders.repository.js';
 import { InventoryService } from '../src/services/inventory.service.js';
 import { PricingService } from '../src/services/pricing.service.js';
+import { NotificationsService } from '../src/services/notifications.service.js';
+import { InMemoryAuditRepository } from '../src/repositories/audit.repository.js';
 import type { CreateOrderInput } from '../src/models/order.js';
 
 function buildService(stock?: Record<string, number>) {
   const repository = new InMemoryOrdersRepository();
   const inventory = new InventoryService(stock ?? { 'SKU-A': 10, 'SKU-B': 5 });
   const pricing = new PricingService();
+  const notifications = new NotificationsService(new InMemoryAuditRepository());
   const service = new OrdersService({
     repository,
     inventory,
     pricing,
+    notifications,
     defaultCurrency: 'USD',
     maxOrderItems: 50,
   });
