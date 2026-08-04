@@ -15,6 +15,7 @@ const envSchema = z.object({
     .length(3, 'DEFAULT_CURRENCY must be a 3-letter ISO 4217 code')
     .default('USD'),
   MAX_ORDER_ITEMS: z.coerce.number().int().positive().max(500).default(50),
+  SHIPPING_PARTNER_BASE_URL: z.string().url().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

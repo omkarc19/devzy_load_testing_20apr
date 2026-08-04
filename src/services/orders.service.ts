@@ -12,6 +12,7 @@ import { money } from '../utils/money.js';
 import type { OrdersRepository, ListOrdersFilter } from '../repositories/orders.repository.js';
 import type { InventoryService } from './inventory.service.js';
 import type { PricingService } from './pricing.service.js';
+import type { NotificationsService } from './notifications.service.js';
 
 const log = childLogger('orders');
 
@@ -19,6 +20,7 @@ export interface OrdersServiceDeps {
   repository: OrdersRepository;
   inventory: InventoryService;
   pricing: PricingService;
+  notifications: NotificationsService;
   defaultCurrency: string;
   maxOrderItems: number;
 }
@@ -104,6 +106,11 @@ export class OrdersService {
     }
 
     const updated = await this.deps.repository.update(id, { status: next });
+    await this.deps.notifications.emitOrderStatusChange(
+      updated.id,
+      updated.status,
+      `customer-${updated.customerId}@example.com`
+    );
     log.info({ orderId: id, from: order.status, to: next }, 'order status changed');
     return updated;
   }
