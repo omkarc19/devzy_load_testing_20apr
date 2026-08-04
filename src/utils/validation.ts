@@ -29,6 +29,14 @@ export const updateStatusSchema = z.object({
   status: z.enum(['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']),
 });
 
+/**
+ * Body schema for the bulk order-lookup endpoint. Capped at 100 ids so a single
+ * request cannot ask for an unbounded number of orders.
+ */
+export const batchGetOrdersSchema = z.object({
+  ids: z.array(z.string().min(1).max(64)).min(1).max(100),
+});
+
 export const listOrdersQuerySchema = z.object({
   status: z
     .enum(['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'])

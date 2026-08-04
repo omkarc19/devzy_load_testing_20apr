@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import type { OrdersService } from '../services/orders.service.js';
 import {
+  batchGetOrdersSchema,
   createOrderSchema,
   listOrdersQuerySchema,
   parseOrThrow,
@@ -50,6 +51,12 @@ export class OrdersController {
   getById = async (req: Request, res: Response): Promise<void> => {
     const order = await this.orders.getOrder(req.params.id as string);
     res.json(serialize(order));
+  };
+
+  batchGet = async (req: Request, res: Response): Promise<void> => {
+    const { ids } = parseOrThrow(batchGetOrdersSchema, req.body);
+    const orders = await this.orders.getOrdersByIds(ids);
+    res.json({ orders: orders.map(serialize) });
   };
 
   list = async (req: Request, res: Response): Promise<void> => {

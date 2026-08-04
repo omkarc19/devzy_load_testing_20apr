@@ -123,3 +123,16 @@ describe('OrdersService status transitions', () => {
     await expect(service.getOrder('nope')).rejects.toThrow(/not found/);
   });
 });
+
+describe('OrdersService.getOrdersByIds', () => {
+  it('returns the stored orders for the given ids and skips unknown ones', async () => {
+    const { service } = buildService();
+    const a = await service.createOrder(baseInput);
+    const b = await service.createOrder(baseInput);
+
+    const result = await service.getOrdersByIds([a.id, 'missing', b.id]);
+
+    expect(result).toHaveLength(2);
+    expect(result.map((o) => o.id).sort()).toEqual([a.id, b.id].sort());
+  });
+});
