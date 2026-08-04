@@ -7,7 +7,10 @@ import { InventoryService } from './services/inventory.service.js';
 import { PricingService } from './services/pricing.service.js';
 import { OrdersService } from './services/orders.service.js';
 import { OrdersController } from './controllers/orders.controller.js';
+import { FulfillmentService } from './services/fulfillment.service.js';
+import { WebhooksController } from './controllers/webhooks.controller.js';
 import { buildOrdersRouter } from './routes/orders.routes.js';
+import { buildWebhooksRouter } from './routes/webhooks.routes.js';
 import { buildHealthRouter } from './routes/health.routes.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 
@@ -34,8 +37,15 @@ export function createApp(config: AppConfig): Express {
   });
   const ordersController = new OrdersController(ordersService);
 
+  const fulfillment = new FulfillmentService({
+    repository,
+    webhookSecret: config.WEBHOOK_SECRET,
+  });
+  const webhooksController = new WebhooksController(fulfillment);
+
   app.use('/', buildHealthRouter());
   app.use('/orders', buildOrdersRouter(ordersController, config.API_KEY));
+  app.use('/webhooks', buildWebhooksRouter(webhooksController, config.API_KEY));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

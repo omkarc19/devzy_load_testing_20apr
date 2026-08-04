@@ -10,6 +10,7 @@ const envSchema = z.object({
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
     .default('info'),
   API_KEY: z.string().min(1, 'API_KEY must not be empty'),
+  WEBHOOK_SECRET: z.string().min(1, 'WEBHOOK_SECRET must not be empty'),
   DEFAULT_CURRENCY: z
     .string()
     .length(3, 'DEFAULT_CURRENCY must be a 3-letter ISO 4217 code')
