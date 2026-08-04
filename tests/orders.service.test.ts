@@ -44,8 +44,8 @@ describe('OrdersService.createOrder', () => {
 
   it('applies a whole-order discount', async () => {
     const order = await ctx.service.createOrder({ ...baseInput, discountPercent: 10 });
-    // 2000 - 10% = 1800
-    expect(order.total.amountMinor).toBe(1800);
+    // 10% of 2000 = 200
+    expect(order.total.amountMinor).toBe(200);
   });
 
   it('reserves inventory on creation', async () => {

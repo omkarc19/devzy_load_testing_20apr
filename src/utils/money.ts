@@ -48,7 +48,10 @@ export function applyPercentDiscount(value: Money, percent: number): Money {
   if (percent < 0 || percent > 100) {
     throw new RangeError(`Discount percent must be between 0 and 100, got ${percent}`);
   }
-  const discounted = Math.round((value.amountMinor * (100 - percent)) / 100);
+  // Express the discount as a fraction of the original amount, then round to
+  // the nearest minor unit so totals stay in whole cents.
+  const discountFraction = percent / 100;
+  const discounted = Math.round(value.amountMinor * discountFraction);
   return money(discounted, value.currency);
 }
 
